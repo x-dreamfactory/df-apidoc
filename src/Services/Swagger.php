@@ -110,6 +110,7 @@ class Swagger extends BaseRestService
             //  Build services from database
             //  Pull any custom swagger docs
             $tags = [];
+            /** @var Service[] $models */
             $models = Service::whereIsActive(true)->get();
             foreach ($models as $model) {
                 $apiName = $model->name;
