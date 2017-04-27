@@ -9,7 +9,6 @@ use DreamFactory\Core\Models\Service;
 use DreamFactory\Core\Services\BaseRestService;
 use DreamFactory\Core\Utility\ResourcesWrapper;
 use DreamFactory\Core\Utility\Session;
-use DreamFactory\Library\Utility\Inflector;
 use Config;
 use Log;
 
@@ -226,7 +225,7 @@ HTML;
     public static function getApiDocInfo($service)
     {
         $name = strtolower($service->name);
-        $capitalized = Inflector::camelize($service->name);
+        $capitalized = camelize($service->name);
 
         return [
             'paths'       => [
