@@ -1,7 +1,7 @@
 <?php
 namespace DreamFactory\Core\ApiDoc\Enums;
 
-use DreamFactory\Library\Utility\Enums\FactoryEnum;
+use DreamFactory\Core\Enums\FactoryEnum;
 use DreamFactory\Core\Exceptions\NotImplementedException;
 
 /**
