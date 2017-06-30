@@ -1,16 +1,18 @@
 <?php
+
 namespace DreamFactory\Core\ApiDoc\Services;
 
 use DreamFactory\Core\Components\StaticCacheable;
+use DreamFactory\Core\Contracts\ServiceInterface;
 use DreamFactory\Core\Enums\ApiOptions;
 use DreamFactory\Core\Enums\DataFormats;
 use DreamFactory\Core\Exceptions\UnauthorizedException;
-use DreamFactory\Core\Models\Service;
 use DreamFactory\Core\Services\BaseRestService;
 use DreamFactory\Core\Utility\ResourcesWrapper;
 use DreamFactory\Core\Utility\Session;
 use Config;
 use Log;
+use ServiceManager;
 
 
 /**
@@ -86,9 +88,9 @@ class Swagger extends BaseRestService
     /**
      * Main retrieve point for a list of swagger-able services
      * This builds the full swagger cache if it does not exist
-     *
      * @return string The JSON contents of the swagger api listing.
-     * @throws \DreamFactory\Core\Exceptions\UnauthorizedException
+     * @throws UnauthorizedException
+     * @throws \Exception
      */
     public function getSwagger()
     {
@@ -105,36 +107,24 @@ class Swagger extends BaseRestService
             $paths = [];
             $definitions = static::getDefaultModels();
             $parameters = ApiOptions::getSwaggerGlobalParameters();
-
-            //  Build services from database
-            //  Pull any custom swagger docs
             $tags = [];
-            /** @var Service[] $models */
-            $models = Service::whereIsActive(true)->get();
-            foreach ($models as $model) {
-                $apiName = $model->name;
-                if (!Session::checkForAnyServicePermissions($apiName)) {
-                    continue;
-                }
 
-                $tag[$apiName] = $model->description;
-                if ($doc = $model->getDocAttribute()) {
-                    if (is_array($doc) && !empty($content = array_get($doc, 'content'))) {
-                        if (is_string($content)) {
-                            $content = Service::storedContentToArray($content, array_get($doc, 'format'), $model);
-                            if (!empty($content)) {
-                                $servicePaths = (array)array_get($content, 'paths');
-                                $serviceDefs = (array)array_get($content, 'definitions');
-                                $serviceParams = (array)array_get($content, 'parameters');
+            //	Spin through services and pull the events
+            /** @var ServiceInterface[] $services */
+            if (!empty($services = ServiceManager::getServices(true))) {
+                foreach ($services as $apiName => $service) {
+                    $tag[$apiName] = $service->getDescription();
+                    $content = $service->getApiDoc();
+                    if (!empty($content)) {
+                        $servicePaths = (array)array_get($content, 'paths');
+                        $serviceDefs = (array)array_get($content, 'definitions');
+                        $serviceParams = (array)array_get($content, 'parameters');
 
-                                //  Add to the pile
-                                $paths = array_merge($paths, $servicePaths);
-                                $definitions = array_merge($definitions, $serviceDefs);
-                                $parameters = array_merge($parameters, $serviceParams);
-                            }
-                        }
+                        //  Add to the pile
+                        $paths = array_merge($paths, $servicePaths);
+                        $definitions = array_merge($definitions, $serviceDefs);
+                        $parameters = array_merge($parameters, $serviceParams);
                     }
-
                 }
             }
 
@@ -232,10 +222,10 @@ HTML;
                 '/' . $name => [
                     'get' =>
                         [
-                            'tags'              => [$name],
-                            'summary'           => 'get' . $capitalized . '() - Retrieve the Swagger document.',
-                            'operationId'       => 'get' . $capitalized,
-                            'parameters'        => [
+                            'tags'        => [$name],
+                            'summary'     => 'get' . $capitalized . '() - Retrieve the Swagger document.',
+                            'operationId' => 'get' . $capitalized,
+                            'parameters'  => [
                                 [
                                     'name'        => 'file',
                                     'description' => 'Download the results of the request as a file.',
@@ -244,7 +234,7 @@ HTML;
                                     'required'    => false,
                                 ],
                             ],
-                            'responses'         => [
+                            'responses'   => [
                                 '200'     => [
                                     'description' => 'Swagger Response',
                                     'schema'      => ['$ref' => '#/definitions/SwaggerResponse']
@@ -254,7 +244,7 @@ HTML;
                                     'schema'      => ['$ref' => '#/definitions/Error']
                                 ]
                             ],
-                            'description'       => 'This returns the Swagger file containing all API services.',
+                            'description' => 'This returns the Swagger file containing all API services.',
                         ],
                 ],
             ],
