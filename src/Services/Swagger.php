@@ -39,7 +39,7 @@ class Swagger extends BaseRestService
     /**
      * @const string The private cache file
      */
-    const SWAGGER_CACHE_PREFIX = 'swagger';
+    const SWAGGER_CACHE_PREFIX = 'swagger:';
 
     //*************************************************************************
     //	Members
@@ -69,11 +69,15 @@ class Swagger extends BaseRestService
     protected function handleGET()
     {
         if ($this->request->getParameterAsBool(ApiOptions::AS_ACCESS_LIST)) {
-            return [];
+            return ResourcesWrapper::wrapResources(ServiceManager::getServiceNames());
+        }
+
+        if (!empty($this->resource)) {
+            return $this->getSwaggerForService($this->resource);
         }
 
         if ($this->request->getParameterAsBool(ApiOptions::REFRESH)) {
-            $roleId = intval(Session::getRoleId());
+            $roleId = Session::getRoleId();
             static::clearCache($roleId);
         }
 
@@ -82,13 +86,13 @@ class Swagger extends BaseRestService
 
     public static function clearCache($role_id)
     {
-        static::removeFromCache(intval($role_id));
+        static::removeFromCache($role_id);
     }
 
     /**
      * Main retrieve point for a list of swagger-able services
      * This builds the full swagger cache if it does not exist
-     * @return string The JSON contents of the swagger api listing.
+     * @return array The JSON contents of the swagger api listing.
      * @throws UnauthorizedException
      * @throws \Exception
      */
@@ -113,7 +117,7 @@ class Swagger extends BaseRestService
             /** @var ServiceInterface[] $services */
             if (!empty($services = ServiceManager::getServices(true))) {
                 foreach ($services as $apiName => $service) {
-                    $tag[$apiName] = $service->getDescription();
+                    $tags[$apiName] = $service->getDescription();
                     $content = $service->getApiDoc();
                     if (!empty($content)) {
                         $servicePaths = (array)array_get($content, 'paths');
@@ -165,6 +169,87 @@ HTML;
 
             Log::info('Swagger cache build process complete');
         }
+
+        return $content;
+    }
+
+    /**
+     * This builds the full swagger cache for a particular service if it does not exist
+     * @param string $name
+     * @return array The JSON contents of the swagger api listing.
+     * @throws UnauthorizedException
+     */
+    public function getSwaggerForService($name)
+    {
+        if (Session::isSysAdmin()) {
+            $roleId = 'admin';
+        } elseif (empty($roleId = strval(Session::getRoleId()))) {
+            throw new UnauthorizedException("Valid role or administrator required.");
+        }
+
+//        if (null === ($content = static::getFromCache($name.':'.$roleId))) {
+            Log::info("Building Swagger cache for $name");
+
+            //  Gather the services
+            $paths = [];
+            $definitions = static::getDefaultModels();
+            $parameters = ApiOptions::getSwaggerGlobalParameters();
+            $tags = [];
+
+            //	Spin through service and pull the events
+            /** @var ServiceInterface $service */
+            if (!empty($service = ServiceManager::getService($name))) {
+                $tags[$name] = $service->getDescription();
+                $content = $service->getApiDoc();
+                if (!empty($content)) {
+                    $servicePaths = (array)array_get($content, 'paths');
+                    $serviceDefs = (array)array_get($content, 'definitions');
+                    $serviceParams = (array)array_get($content, 'parameters');
+
+                    //  Add to the pile
+                    $paths = array_merge($paths, $servicePaths);
+                    $definitions = array_merge($definitions, $serviceDefs);
+                    $parameters = array_merge($parameters, $serviceParams);
+                }
+            }
+
+            // cache main api listing file
+            $description = <<<HTML
+HTML;
+
+            $content = [
+                'swagger'             => static::SWAGGER_VERSION,
+                'securityDefinitions' => ['apiKey' => ['type' => 'apiKey', 'name' => 'api_key', 'in' => 'header']],
+                'info'                => [
+                    'title'       => 'DreamFactory Live API Documentation',
+                    'description' => $description,
+                    'version'     => Config::get('df.api_version', static::API_VERSION),
+                    //'termsOfServiceUrl' => 'http://www.dreamfactory.com/terms/',
+                    'contact'     => [
+                        'name'  => 'DreamFactory Software, Inc.',
+                        'email' => 'support@dreamfactory.com',
+                        'url'   => "https://www.dreamfactory.com/"
+                    ],
+                    'license'     => [
+                        'name' => 'Apache 2.0',
+                        'url'  => 'http://www.apache.org/licenses/LICENSE-2.0.html'
+                    ]
+                ],
+                //'host'           => 'df.local',
+                //'schemes'        => ['https'],
+                'basePath'            => '/api/v2',
+                'consumes'            => ['application/json', 'application/xml'],
+                'produces'            => ['application/json', 'application/xml'],
+                'paths'               => $paths,
+                'definitions'         => $definitions,
+                'tags'                => $tags,
+                'parameters'          => $parameters,
+            ];
+
+//            static::addToCache($name.':'.$roleId, $content, true);
+
+            Log::info('Swagger cache build process complete');
+//        }
 
         return $content;
     }
