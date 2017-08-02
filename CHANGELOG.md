@@ -3,6 +3,7 @@ All notable changes to this project will be documented in this file.
 This project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
+- DF-1074 Rework swagger generation to be role permission based output and available by service name
 
 ## [0.3.0] - 2017-07-27
 - Cleanup API doc retrieval from services

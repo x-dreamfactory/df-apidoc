@@ -6,7 +6,8 @@ use DreamFactory\Core\Components\StaticCacheable;
 use DreamFactory\Core\Contracts\ServiceInterface;
 use DreamFactory\Core\Enums\ApiOptions;
 use DreamFactory\Core\Enums\DataFormats;
-use DreamFactory\Core\Exceptions\UnauthorizedException;
+use DreamFactory\Core\Enums\VerbsMask;
+use DreamFactory\Core\Exceptions\ForbiddenException;
 use DreamFactory\Core\Services\BaseRestService;
 use DreamFactory\Core\Utility\ResourcesWrapper;
 use DreamFactory\Core\Utility\Session;
@@ -64,24 +65,112 @@ class Swagger extends BaseRestService
     }
 
     /**
-     * @return array|string|bool
+     * @return array
+     * @throws ForbiddenException
      */
     protected function handleGET()
     {
-        if ($this->request->getParameterAsBool(ApiOptions::AS_ACCESS_LIST)) {
-            return ResourcesWrapper::wrapResources(ServiceManager::getServiceNames());
+        if (empty($this->resource)) {
+            if ($this->request->getParameterAsBool(ApiOptions::AS_ACCESS_LIST)) {
+                return parent::handleGET();
+            }
+
+            if ($this->request->getParameterAsBool('as_resources')) {
+                $services = [];
+                foreach (ServiceManager::getServiceNames(true) as $serviceName) {
+                    if (Session::checkForAnyServicePermissions($serviceName)) {
+                        $services[] = ['name' => $serviceName];
+                    }
+                }
+
+                return ResourcesWrapper::wrapResources($services);
+            }
         }
 
-        if (!empty($this->resource)) {
-            return $this->getSwaggerForService($this->resource);
+        Log::info('Building Swagger cache');
+
+        $content = [
+            'swagger'             => static::SWAGGER_VERSION,
+            'securityDefinitions' => ['apiKey' => ['type' => 'apiKey', 'name' => 'api_key', 'in' => 'header']],
+            //'host'           => 'df.local',
+            //'schemes'        => ['https'],
+            'basePath'            => '/api/v2',
+            'consumes'            => ['application/json', 'application/xml'],
+            'produces'            => ['application/json', 'application/xml'],
+        ];
+
+        $paths = [];
+        $definitions = static::getDefaultModels();
+        $parameters = ApiOptions::getSwaggerGlobalParameters();
+        $tags = [];
+
+        if (empty($this->resource)) {
+            $description = <<<HTML
+HTML;
+            $content['info'] = [
+                'title'       => 'DreamFactory Live API Documentation',
+                'description' => $description,
+                'version'     => Config::get('df.api_version', static::API_VERSION),
+                //'termsOfServiceUrl' => 'http://www.dreamfactory.com/terms/',
+                'contact'     => [
+                    'name'  => 'DreamFactory Software, Inc.',
+                    'email' => 'support@dreamfactory.com',
+                    'url'   => "https://www.dreamfactory.com/"
+                ],
+                'license'     => [
+                    'name' => 'Apache 2.0',
+                    'url'  => 'http://www.apache.org/licenses/LICENSE-2.0.html'
+                ]
+            ];
+            foreach (ServiceManager::getServiceNames(true) as $serviceName) {
+                if (Session::checkForAnyServicePermissions($serviceName)) {
+                    if (!empty($service = ServiceManager::getService($serviceName))) {
+                        $tags[$service->getName()] = $service->getDescription();
+
+                        $results = $this->buildSwaggerServiceInfo($service);
+                        $paths = array_merge($paths, (array)array_get($results, 'paths'));
+                        $definitions = array_merge($definitions, (array)array_get($results, 'definitions'));
+                        $parameters = array_merge($parameters, (array)array_get($results, 'parameters'));
+                    }
+                }
+            }
+        } else {
+            if (!Session::checkForAnyServicePermissions($this->resource)) {
+                throw new ForbiddenException("You do not have access to API Docs for the requested service {$this->resource}.");
+            }
+
+            if (!empty($service = ServiceManager::getService($this->resource))) {
+                $tags[$service->getName()] = $service->getDescription();
+                $content['info'] = [
+                    'title'       => $service->getLabel(),
+                    'description' => $service->getDescription(),
+                    'version'     => Config::get('df.api_version', static::API_VERSION),
+//                //'termsOfServiceUrl' => 'http://www.dreamfactory.com/terms/',
+//                'contact'     => [
+//                    'name'  => 'DreamFactory Software, Inc.',
+//                    'email' => 'support@dreamfactory.com',
+//                    'url'   => "https://www.dreamfactory.com/"
+//                ],
+//                'license'     => [
+//                    'name' => 'Apache 2.0',
+//                    'url'  => 'http://www.apache.org/licenses/LICENSE-2.0.html'
+//                ]
+                ];
+                $results = $this->buildSwaggerServiceInfo($service);
+                $paths = array_merge($paths, (array)array_get($results, 'paths'));
+                $definitions = array_merge($definitions, (array)array_get($results, 'definitions'));
+                $parameters = array_merge($parameters, (array)array_get($results, 'parameters'));
+            }
         }
 
-        if ($this->request->getParameterAsBool(ApiOptions::REFRESH)) {
-            $roleId = Session::getRoleId();
-            static::clearCache($roleId);
-        }
+        $content['paths'] = $paths;
+        $content['definitions'] = $definitions;
+        $content['parameters'] = $parameters;
+        $content['tags'] = $tags;
 
-        return $this->getSwagger();
+        Log::info('Swagger cache build process complete');
+
+        return $content;
     }
 
     public static function clearCache($role_id)
@@ -89,169 +178,53 @@ class Swagger extends BaseRestService
         static::removeFromCache($role_id);
     }
 
-    /**
-     * Main retrieve point for a list of swagger-able services
-     * This builds the full swagger cache if it does not exist
-     * @return array The JSON contents of the swagger api listing.
-     * @throws UnauthorizedException
-     * @throws \Exception
-     */
-    public function getSwagger()
+    public function buildSwaggerServiceInfo(ServiceInterface $service)
     {
-        if (Session::isSysAdmin()) {
-            $roleId = 'admin';
-        } elseif (empty($roleId = strval(Session::getRoleId()))) {
-            throw new UnauthorizedException("Valid role or administrator required.");
-        }
+        //  Gather the services
+        $paths = [];
+        $definitions = [];
+        $parameters = [];
+        $tags = [];
+        $name = $service->getName();
 
-        if (null === ($content = static::getFromCache($roleId))) {
-            Log::info('Building Swagger cache');
+        //	Spin through service and pull the events
+        $content = $service->getApiDoc();
+        if (!empty($content)) {
+            $servicePaths = (array)array_get($content, 'paths');
+            $serviceDefs = (array)array_get($content, 'definitions');
+            $serviceParams = (array)array_get($content, 'parameters');
 
-            //  Gather the services
-            $paths = [];
-            $definitions = static::getDefaultModels();
-            $parameters = ApiOptions::getSwaggerGlobalParameters();
-            $tags = [];
-
-            //	Spin through services and pull the events
-            /** @var ServiceInterface[] $services */
-            if (!empty($services = ServiceManager::getServices(true))) {
-                foreach ($services as $apiName => $service) {
-                    $tags[$apiName] = $service->getDescription();
-                    $content = $service->getApiDoc();
-                    if (!empty($content)) {
-                        $servicePaths = (array)array_get($content, 'paths');
-                        $serviceDefs = (array)array_get($content, 'definitions');
-                        $serviceParams = (array)array_get($content, 'parameters');
-
-                        //  Add to the pile
-                        $paths = array_merge($paths, $servicePaths);
-                        $definitions = array_merge($definitions, $serviceDefs);
-                        $parameters = array_merge($parameters, $serviceParams);
+            if (Session::isSysAdmin()) {
+                //  Add to the pile
+                $paths = array_merge($paths, $servicePaths);
+            } else {
+                foreach ($servicePaths as $path => $pathInfo) {
+                    $resource = $path;
+                    if (false !== stripos($resource, '/' . $name)) {
+                        $resource = ltrim(substr($resource, strlen($name) + 1), '/');
+                    }
+                    $allowed = Session::getServicePermissions($name, $resource);
+                    foreach ($pathInfo as $verb => $verbInfo) {
+                        // Need to check if verb is really verb
+                        try {
+                            $action = VerbsMask::toNumeric($verb);
+                            if ($action & $allowed) {
+                                $paths[$path][$verb] = $verbInfo;
+                            }
+                        } catch (\Exception $ex) {
+                            // not a valid verb, could be part of swagger spec, add it anyway
+                            $paths[$path][$verb] = $verbInfo;
+                        }
                     }
                 }
             }
 
-            // cache main api listing file
-            $description = <<<HTML
-HTML;
-
-            $content = [
-                'swagger'             => static::SWAGGER_VERSION,
-                'securityDefinitions' => ['apiKey' => ['type' => 'apiKey', 'name' => 'api_key', 'in' => 'header']],
-                'info'                => [
-                    'title'       => 'DreamFactory Live API Documentation',
-                    'description' => $description,
-                    'version'     => Config::get('df.api_version', static::API_VERSION),
-                    //'termsOfServiceUrl' => 'http://www.dreamfactory.com/terms/',
-                    'contact'     => [
-                        'name'  => 'DreamFactory Software, Inc.',
-                        'email' => 'support@dreamfactory.com',
-                        'url'   => "https://www.dreamfactory.com/"
-                    ],
-                    'license'     => [
-                        'name' => 'Apache 2.0',
-                        'url'  => 'http://www.apache.org/licenses/LICENSE-2.0.html'
-                    ]
-                ],
-                //'host'           => 'df.local',
-                //'schemes'        => ['https'],
-                'basePath'            => '/api/v2',
-                'consumes'            => ['application/json', 'application/xml'],
-                'produces'            => ['application/json', 'application/xml'],
-                'paths'               => $paths,
-                'definitions'         => $definitions,
-                'tags'                => $tags,
-                'parameters'          => $parameters,
-            ];
-
-            static::addToCache($roleId, $content, true);
-
-            Log::info('Swagger cache build process complete');
+            //  Add to the pile
+            $definitions = array_merge($definitions, $serviceDefs);
+            $parameters = array_merge($parameters, $serviceParams);
         }
 
-        return $content;
-    }
-
-    /**
-     * This builds the full swagger cache for a particular service if it does not exist
-     * @param string $name
-     * @return array The JSON contents of the swagger api listing.
-     * @throws UnauthorizedException
-     */
-    public function getSwaggerForService($name)
-    {
-        if (Session::isSysAdmin()) {
-            $roleId = 'admin';
-        } elseif (empty($roleId = strval(Session::getRoleId()))) {
-            throw new UnauthorizedException("Valid role or administrator required.");
-        }
-
-//        if (null === ($content = static::getFromCache($name.':'.$roleId))) {
-            Log::info("Building Swagger cache for $name");
-
-            //  Gather the services
-            $paths = [];
-            $definitions = static::getDefaultModels();
-            $parameters = ApiOptions::getSwaggerGlobalParameters();
-            $tags = [];
-
-            //	Spin through service and pull the events
-            /** @var ServiceInterface $service */
-            if (!empty($service = ServiceManager::getService($name))) {
-                $tags[$name] = $service->getDescription();
-                $content = $service->getApiDoc();
-                if (!empty($content)) {
-                    $servicePaths = (array)array_get($content, 'paths');
-                    $serviceDefs = (array)array_get($content, 'definitions');
-                    $serviceParams = (array)array_get($content, 'parameters');
-
-                    //  Add to the pile
-                    $paths = array_merge($paths, $servicePaths);
-                    $definitions = array_merge($definitions, $serviceDefs);
-                    $parameters = array_merge($parameters, $serviceParams);
-                }
-            }
-
-            // cache main api listing file
-            $description = <<<HTML
-HTML;
-
-            $content = [
-                'swagger'             => static::SWAGGER_VERSION,
-                'securityDefinitions' => ['apiKey' => ['type' => 'apiKey', 'name' => 'api_key', 'in' => 'header']],
-                'info'                => [
-                    'title'       => 'DreamFactory Live API Documentation',
-                    'description' => $description,
-                    'version'     => Config::get('df.api_version', static::API_VERSION),
-                    //'termsOfServiceUrl' => 'http://www.dreamfactory.com/terms/',
-                    'contact'     => [
-                        'name'  => 'DreamFactory Software, Inc.',
-                        'email' => 'support@dreamfactory.com',
-                        'url'   => "https://www.dreamfactory.com/"
-                    ],
-                    'license'     => [
-                        'name' => 'Apache 2.0',
-                        'url'  => 'http://www.apache.org/licenses/LICENSE-2.0.html'
-                    ]
-                ],
-                //'host'           => 'df.local',
-                //'schemes'        => ['https'],
-                'basePath'            => '/api/v2',
-                'consumes'            => ['application/json', 'application/xml'],
-                'produces'            => ['application/json', 'application/xml'],
-                'paths'               => $paths,
-                'definitions'         => $definitions,
-                'tags'                => $tags,
-                'parameters'          => $parameters,
-            ];
-
-//            static::addToCache($name.':'.$roleId, $content, true);
-
-            Log::info('Swagger cache build process complete');
-//        }
-
-        return $content;
+        return ['tags' => $tags, 'paths' => $paths, 'definitions' => $definitions, 'parameters' => $parameters];
     }
 
     public static function getDefaultModels()
