@@ -77,9 +77,9 @@ class Swagger extends BaseRestService
 
             if ($this->request->getParameterAsBool('as_resources')) {
                 $services = [];
-                foreach (ServiceManager::getServiceNames(true) as $serviceName) {
-                    if (Session::checkForAnyServicePermissions($serviceName)) {
-                        $services[] = ['name' => $serviceName];
+                foreach (ServiceManager::getServiceList(['name','label','type','group','description'], true) as $serviceInfo) {
+                    if (Session::checkForAnyServicePermissions(array_get($serviceInfo, 'name'))) {
+                        $services[] = $serviceInfo;
                     }
                 }
 
