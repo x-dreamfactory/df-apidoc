@@ -3,10 +3,10 @@
 namespace DreamFactory\Core\ApiDoc\Services;
 
 use DreamFactory\Core\Components\StaticCacheable;
-use DreamFactory\Core\Contracts\ServiceInterface;
 use DreamFactory\Core\Enums\ApiOptions;
 use DreamFactory\Core\Enums\VerbsMask;
 use DreamFactory\Core\Exceptions\ForbiddenException;
+use DreamFactory\Core\Exceptions\ServiceUnavailableException;
 use DreamFactory\Core\Services\BaseRestService;
 use DreamFactory\Core\Utility\ResourcesWrapper;
 use DreamFactory\Core\Utility\Session;
@@ -58,21 +58,28 @@ class Swagger extends BaseRestService
     /**
      * @return array
      * @throws ForbiddenException
+     * @throws ServiceUnavailableException
      */
     protected function handleGET()
     {
         if ('_service' === $this->resource) {
             if (empty($this->resourceId)) {
                 $services = [];
-                foreach (ServiceManager::getServiceList(['name', 'label', 'type', 'description'],
-                    true) as $serviceInfo) {
-                    $name = array_get($serviceInfo, 'name');
+                foreach (ServiceManager::getServiceNames(true) as $name) {
                     if ($name === $this->getName()) {
                         continue;
                     }
                     // only allowed services by role here
                     if (Session::checkForAnyServicePermissions($name)) {
-                        $services[] = $serviceInfo;
+                        $service = ServiceManager::getService($name);
+                        if (!empty($service->getApiDoc())) {
+                            $services[] = [
+                                'name'        => $service->getName(),
+                                'label'       => $service->getLabel(),
+                                'type'        => $service->getType(),
+                                'description' => $service->getDescription()
+                            ];
+                        }
                     }
                 }
 
@@ -92,7 +99,10 @@ class Swagger extends BaseRestService
 
             $service = ServiceManager::getService($this->resourceId);
             $tags[$service->getName()] = $service->getDescription();
-            $results = $this->buildSwaggerServiceInfo($service);
+            if (empty($doc = $service->getApiDoc())) {
+                throw new ServiceUnavailableException("There are no defined API Docs for the requested service {$this->resourceId}.");
+            }
+            $results = $this->buildSwaggerServiceInfo($service->getName(), $doc);
             $paths = array_merge($paths, (array)array_get($results, 'paths'));
             $definitions = array_merge($definitions, (array)array_get($results, 'definitions'));
             $parameters = array_merge($parameters, (array)array_get($results, 'parameters'));
@@ -123,6 +133,10 @@ class Swagger extends BaseRestService
         } elseif ('_service_type' === $this->resource) {
             $types = [];
             foreach (ServiceManager::getServiceTypes() as $typeInfo) {
+                if ($typeInfo->getName() === $this->getType()) {
+                    // don't include swagger in the types list
+                    continue;
+                }
                 $types[] = array_only($typeInfo->toArray(), ['name', 'label', 'group', 'description']);
             }
 
@@ -143,11 +157,13 @@ class Swagger extends BaseRestService
         foreach (ServiceManager::getServiceNames(true) as $serviceName) {
             if (Session::checkForAnyServicePermissions($serviceName)) {
                 if (!empty($service = ServiceManager::getService($serviceName))) {
-                    $results = $this->buildSwaggerServiceInfo($service);
-                    $paths = array_merge($paths, (array)array_get($results, 'paths'));
-                    $definitions = array_merge($definitions, (array)array_get($results, 'definitions'));
-                    $parameters = array_merge($parameters, (array)array_get($results, 'parameters'));
-                    $tags[$service->getName()] = $service->getDescription();
+                    if (empty($doc = $service->getApiDoc())) {
+                        $results = $this->buildSwaggerServiceInfo($serviceName, $doc);
+                        $paths = array_merge($paths, (array)array_get($results, 'paths'));
+                        $definitions = array_merge($definitions, (array)array_get($results, 'definitions'));
+                        $parameters = array_merge($parameters, (array)array_get($results, 'parameters'));
+                        $tags[$service->getName()] = $service->getDescription();
+                    }
                 }
             }
         }
@@ -193,50 +209,46 @@ HTML;
         static::removeFromCache($role_id);
     }
 
-    public function buildSwaggerServiceInfo(ServiceInterface $service)
+    protected function buildSwaggerServiceInfo($name, array $content)
     {
         //  Gather the services
         $paths = [];
         $definitions = [];
         $parameters = [];
-        $name = $service->getName();
 
         //	Spin through service and pull the events
-        $content = $service->getApiDoc();
-        if (!empty($content)) {
-            $servicePaths = (array)array_get($content, 'paths');
-            $serviceDefs = (array)array_get($content, 'definitions');
-            $serviceParams = (array)array_get($content, 'parameters');
+        $servicePaths = (array)array_get($content, 'paths');
+        $serviceDefs = (array)array_get($content, 'definitions');
+        $serviceParams = (array)array_get($content, 'parameters');
 
-            if (Session::isSysAdmin()) {
-                //  Add to the pile
-                $paths = array_merge($paths, $servicePaths);
-            } else {
-                foreach ($servicePaths as $path => $pathInfo) {
-                    $resource = $path;
-                    if (false !== stripos($resource, '/' . $name)) {
-                        $resource = ltrim(substr($resource, strlen($name) + 1), '/');
-                    }
-                    $allowed = Session::getServicePermissions($name, $resource);
-                    foreach ($pathInfo as $verb => $verbInfo) {
-                        // Need to check if verb is really verb
-                        try {
-                            $action = VerbsMask::toNumeric($verb);
-                            if ($action & $allowed) {
-                                $paths[$path][$verb] = $verbInfo;
-                            }
-                        } catch (\Exception $ex) {
-                            // not a valid verb, could be part of swagger spec, add it anyway
+        if (Session::isSysAdmin()) {
+            //  Add to the pile
+            $paths = array_merge($paths, $servicePaths);
+        } else {
+            foreach ($servicePaths as $path => $pathInfo) {
+                $resource = $path;
+                if (false !== stripos($resource, '/' . $name)) {
+                    $resource = ltrim(substr($resource, strlen($name) + 1), '/');
+                }
+                $allowed = Session::getServicePermissions($name, $resource);
+                foreach ($pathInfo as $verb => $verbInfo) {
+                    // Need to check if verb is really verb
+                    try {
+                        $action = VerbsMask::toNumeric($verb);
+                        if ($action & $allowed) {
                             $paths[$path][$verb] = $verbInfo;
                         }
+                    } catch (\Exception $ex) {
+                        // not a valid verb, could be part of swagger spec, add it anyway
+                        $paths[$path][$verb] = $verbInfo;
                     }
                 }
             }
-
-            //  Add to the pile
-            $definitions = array_merge($definitions, $serviceDefs);
-            $parameters = array_merge($parameters, $serviceParams);
         }
+
+        //  Add to the pile
+        $definitions = array_merge($definitions, $serviceDefs);
+        $parameters = array_merge($parameters, $serviceParams);
 
         return ['paths' => $paths, 'definitions' => $definitions, 'parameters' => $parameters];
     }
@@ -392,7 +404,7 @@ HTML;
                 ],
             ],
             'definitions' => [
-                'SwaggerResponse'   => [
+                'SwaggerResponse'     => [
                     'type'       => 'object',
                     'properties' => [
                         'apiVersion'  => [
@@ -423,7 +435,7 @@ HTML;
                         ],
                     ],
                 ],
-                'SwaggerPath'       => [
+                'SwaggerPath'         => [
                     'type'       => 'object',
                     'properties' => [
                         '__name__' => [
@@ -432,7 +444,7 @@ HTML;
                         ],
                     ],
                 ],
-                'SwaggerDefinition' => [
+                'SwaggerDefinition'   => [
                     'type'       => 'object',
                     'properties' => [
                         '__name__' => [
@@ -441,7 +453,7 @@ HTML;
                         ],
                     ],
                 ],
-                'SwaggerServices'          => [
+                'SwaggerServices'     => [
                     'type'       => 'object',
                     'properties' => [
                         $wrapper => [
@@ -453,16 +465,28 @@ HTML;
                         ],
                     ],
                 ],
-                'SwaggerService'           => [
+                'SwaggerService'      => [
                     'type'       => 'object',
                     'properties' => [
                         'name' => [
                             'type'        => 'string',
                             'description' => 'Name of the service.',
                         ],
+                        'label' => [
+                            'type'        => 'string',
+                            'description' => 'Label for the service.',
+                        ],
+                        'type' => [
+                            'type'        => 'string',
+                            'description' => 'Type of the service.',
+                        ],
+                        'description' => [
+                            'type'        => 'string',
+                            'description' => 'Description of the service.',
+                        ],
                     ],
                 ],
-                'SwaggerServiceTypes'          => [
+                'SwaggerServiceTypes' => [
                     'type'       => 'object',
                     'properties' => [
                         $wrapper => [
@@ -474,12 +498,24 @@ HTML;
                         ],
                     ],
                 ],
-                'SwaggerServiceType'           => [
+                'SwaggerServiceType'  => [
                     'type'       => 'object',
                     'properties' => [
                         'name' => [
                             'type'        => 'string',
                             'description' => 'Name of the service type.',
+                        ],
+                        'label' => [
+                            'type'        => 'string',
+                            'description' => 'Label for the service type.',
+                        ],
+                        'group' => [
+                            'type'        => 'string',
+                            'description' => 'Group to which the service type belongs.',
+                        ],
+                        'description' => [
+                            'type'        => 'string',
+                            'description' => 'Description of the service type.',
                         ],
                     ],
                 ],
