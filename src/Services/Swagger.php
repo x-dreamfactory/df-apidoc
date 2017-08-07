@@ -157,7 +157,7 @@ class Swagger extends BaseRestService
         foreach (ServiceManager::getServiceNames(true) as $serviceName) {
             if (Session::checkForAnyServicePermissions($serviceName)) {
                 if (!empty($service = ServiceManager::getService($serviceName))) {
-                    if (empty($doc = $service->getApiDoc())) {
+                    if (!empty($doc = $service->getApiDoc())) {
                         $results = $this->buildSwaggerServiceInfo($serviceName, $doc);
                         $paths = array_merge($paths, (array)array_get($results, 'paths'));
                         $definitions = array_merge($definitions, (array)array_get($results, 'definitions'));
