@@ -2,7 +2,6 @@
 
 namespace DreamFactory\Core\ApiDoc\Services;
 
-use DreamFactory\Core\Components\StaticCacheable;
 use DreamFactory\Core\Enums\ApiOptions;
 use DreamFactory\Core\Enums\VerbsMask;
 use DreamFactory\Core\Exceptions\ForbiddenException;
@@ -22,8 +21,6 @@ use ServiceManager;
  */
 class Swagger extends BaseRestService
 {
-    use StaticCacheable;
-
     //*************************************************************************
     //	Constants
     //*************************************************************************
@@ -32,28 +29,10 @@ class Swagger extends BaseRestService
      * @const string The OpenAPI Spec/Swagger version
      */
     const SWAGGER_VERSION = '2.0';
-    /**
-     * @const string The private cache file
-     */
-    const SWAGGER_CACHE_PREFIX = 'swagger:';
-
-    //*************************************************************************
-    //	Members
-    //*************************************************************************
-
 
     //*************************************************************************
     //	Methods
     //*************************************************************************
-
-    /**
-     *
-     * @return string The cache prefix associated with this service
-     */
-    protected static function getCachePrefix()
-    {
-        return static::SWAGGER_CACHE_PREFIX;
-    }
 
     /**
      * @return array
@@ -65,21 +44,14 @@ class Swagger extends BaseRestService
         if ('_service' === $this->resource) {
             if (empty($this->resourceId)) {
                 $services = [];
-                foreach (ServiceManager::getServiceNames(true) as $name) {
-                    if ($name === $this->getName()) {
+                foreach (ServiceManager::getServiceList(['name','label','type','description']) as $info) {
+                    $name = array_get($info, 'name');
+                    if (empty($name) || ($this->getName() === $name)) {
                         continue;
                     }
                     // only allowed services by role here
                     if (Session::checkForAnyServicePermissions($name)) {
-                        $service = ServiceManager::getService($name);
-                        if (!empty($service->getApiDoc())) {
-                            $services[] = [
-                                'name'        => $service->getName(),
-                                'label'       => $service->getLabel(),
-                                'type'        => $service->getType(),
-                                'description' => $service->getDescription()
-                            ];
-                        }
+                        $services[] = $info;
                     }
                 }
 
@@ -88,24 +60,21 @@ class Swagger extends BaseRestService
 
             Log::info("Building Swagger file for service {$this->resourceId}.");
 
-            $paths = [];
-            $definitions = static::getDefaultModels();
-            $parameters = ApiOptions::getSwaggerGlobalParameters();
-            $tags = [];
-
             if (!Session::checkForAnyServicePermissions($this->resourceId)) {
                 throw new ForbiddenException("You do not have access to API Docs for the requested service {$this->resourceId}.");
             }
 
             $service = ServiceManager::getService($this->resourceId);
-            $tags[$service->getName()] = $service->getDescription();
             if (empty($doc = $service->getApiDoc())) {
                 throw new ServiceUnavailableException("There are no defined API Docs for the requested service {$this->resourceId}.");
             }
+
             $results = $this->buildSwaggerServiceInfo($service->getName(), $doc);
-            $paths = array_merge($paths, (array)array_get($results, 'paths'));
-            $definitions = array_merge($definitions, (array)array_get($results, 'definitions'));
-            $parameters = array_merge($parameters, (array)array_get($results, 'parameters'));
+
+            $tags = [['name' => $service->getName(), 'description' => (string)$service->getDescription()]];
+            $paths = (array)array_get($results, 'paths');
+            $definitions = (array)array_get($results, 'definitions');
+            $parameters = (array)array_get($results, 'parameters');
 
             $content = [
                 'swagger'             => static::SWAGGER_VERSION,
@@ -125,7 +94,6 @@ class Swagger extends BaseRestService
                 'parameters'          => $parameters,
                 'tags'                => $tags,
             ];
-
 
             Log::info('Swagger file build process complete.');
 
@@ -150,8 +118,8 @@ class Swagger extends BaseRestService
         Log::info('Building Swagger file for this instance.');
 
         $paths = [];
-        $definitions = static::getDefaultModels();
-        $parameters = ApiOptions::getSwaggerGlobalParameters();
+        $definitions = [];
+        $parameters = [];
         $tags = [];
 
         foreach (ServiceManager::getServiceNames(true) as $serviceName) {
@@ -162,7 +130,7 @@ class Swagger extends BaseRestService
                         $paths = array_merge($paths, (array)array_get($results, 'paths'));
                         $definitions = array_merge($definitions, (array)array_get($results, 'definitions'));
                         $parameters = array_merge($parameters, (array)array_get($results, 'parameters'));
-                        $tags[$service->getName()] = $service->getDescription();
+                        $tags[] = ['name' => $service->getName(), 'description' => (string)$service->getDescription()];
                     }
                 }
             }
@@ -251,49 +219,6 @@ HTML;
         $parameters = array_merge($parameters, $serviceParams);
 
         return ['paths' => $paths, 'definitions' => $definitions, 'parameters' => $parameters];
-    }
-
-    public static function getDefaultModels()
-    {
-        $wrapper = ResourcesWrapper::getWrapper();
-
-        return [
-            'ResourceList' => [
-                'type'       => 'object',
-                'properties' => [
-                    $wrapper => [
-                        'type'        => 'array',
-                        'description' => 'Array of accessible resources available to this service.',
-                        'items'       => [
-                            'type' => 'string',
-                        ],
-                    ],
-                ],
-            ],
-            'Success'      => [
-                'type'       => 'object',
-                'properties' => [
-                    'success' => [
-                        'type'        => 'boolean',
-                        'description' => 'True when API call was successful, false or error otherwise.',
-                    ],
-                ],
-            ],
-            'Error'        => [
-                'type'       => 'object',
-                'properties' => [
-                    'code'    => [
-                        'type'        => 'integer',
-                        'format'      => 'int32',
-                        'description' => 'Error code.',
-                    ],
-                    'message' => [
-                        'type'        => 'string',
-                        'description' => 'String description of the error.',
-                    ],
-                ],
-            ],
-        ];
     }
 
     public static function getApiDocInfo($service)
