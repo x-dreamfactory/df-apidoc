@@ -41,32 +41,16 @@ class Swagger extends BaseRestService
      */
     protected function handleGET()
     {
-        if ('_service' === $this->resource) {
-            if (empty($this->resourceId)) {
-                $services = [];
-                foreach (ServiceManager::getServiceList(['name','label','type','description']) as $info) {
-                    $name = array_get($info, 'name');
-                    if (empty($name) || ($this->getName() === $name)) {
-                        continue;
-                    }
-                    // only allowed services by role here
-                    if (Session::checkForAnyServicePermissions($name)) {
-                        $services[] = $info;
-                    }
-                }
+        if (!empty($this->resource)) {
+            Log::info("Building Swagger file for service {$this->resource}.");
 
-                return ResourcesWrapper::wrapResources($services);
+            if (!Session::checkForAnyServicePermissions($this->resource)) {
+                throw new ForbiddenException("You do not have access to API Docs for the requested service {$this->resource}.");
             }
 
-            Log::info("Building Swagger file for service {$this->resourceId}.");
-
-            if (!Session::checkForAnyServicePermissions($this->resourceId)) {
-                throw new ForbiddenException("You do not have access to API Docs for the requested service {$this->resourceId}.");
-            }
-
-            $service = ServiceManager::getService($this->resourceId);
+            $service = ServiceManager::getService($this->resource);
             if (empty($doc = $service->getApiDoc())) {
-                throw new ServiceUnavailableException("There are no defined API Docs for the requested service {$this->resourceId}.");
+                throw new ServiceUnavailableException("There are no defined API Docs for the requested service {$this->resource}.");
             }
 
             $results = $this->buildSwaggerServiceInfo($service->getName(), $doc);
@@ -98,17 +82,6 @@ class Swagger extends BaseRestService
             Log::info('Swagger file build process complete.');
 
             return $content;
-        } elseif ('_service_type' === $this->resource) {
-            $types = [];
-            foreach (ServiceManager::getServiceTypes() as $typeInfo) {
-                if ($typeInfo->getName() === $this->getType()) {
-                    // don't include swagger in the types list
-                    continue;
-                }
-                $types[] = array_only($typeInfo->toArray(), ['name', 'label', 'group', 'description']);
-            }
-
-            return ResourcesWrapper::wrapResources($types);
         }
 
         if ($this->request->getParameterAsBool(ApiOptions::AS_ACCESS_LIST)) {
@@ -170,11 +143,6 @@ HTML;
         Log::info('Swagger file build process complete.');
 
         return $content;
-    }
-
-    public static function clearCache($role_id)
-    {
-        static::removeFromCache($role_id);
     }
 
     protected function buildSwaggerServiceInfo($name, array $content)
