@@ -97,14 +97,20 @@ class Swagger extends BaseRestService
 
         foreach (ServiceManager::getServiceNames(true) as $serviceName) {
             if (Session::checkForAnyServicePermissions($serviceName)) {
-                if (!empty($service = ServiceManager::getService($serviceName))) {
-                    if (!empty($doc = $service->getApiDoc())) {
-                        $results = $this->buildSwaggerServiceInfo($serviceName, $doc);
-                        $paths = array_merge($paths, (array)array_get($results, 'paths'));
-                        $definitions = array_merge($definitions, (array)array_get($results, 'definitions'));
-                        $parameters = array_merge($parameters, (array)array_get($results, 'parameters'));
-                        $tags[] = ['name' => $service->getName(), 'description' => (string)$service->getDescription()];
+                try {
+                    if (!empty($service = ServiceManager::getService($serviceName))) {
+                        if (!empty($doc = $service->getApiDoc())) {
+                            $results = $this->buildSwaggerServiceInfo($serviceName, $doc);
+                            $paths = array_merge($paths, (array)array_get($results, 'paths'));
+                            $definitions = array_merge($definitions, (array)array_get($results, 'definitions'));
+                            $parameters = array_merge($parameters, (array)array_get($results, 'parameters'));
+                            $tags[] = ['name'        => $service->getName(),
+                                       'description' => (string)$service->getDescription()
+                            ];
+                        }
                     }
+                } catch (\Exception $ex) {
+                    Log::info("Failed to build Swagger file for service $serviceName. {$ex->getMessage()}");
                 }
             }
         }
