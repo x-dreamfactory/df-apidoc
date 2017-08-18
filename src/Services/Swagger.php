@@ -2,11 +2,10 @@
 
 namespace DreamFactory\Core\ApiDoc\Services;
 
-use DreamFactory\Core\Components\StaticCacheable;
-use DreamFactory\Core\Contracts\ServiceInterface;
 use DreamFactory\Core\Enums\ApiOptions;
-use DreamFactory\Core\Enums\DataFormats;
-use DreamFactory\Core\Exceptions\UnauthorizedException;
+use DreamFactory\Core\Enums\VerbsMask;
+use DreamFactory\Core\Exceptions\ForbiddenException;
+use DreamFactory\Core\Exceptions\ServiceUnavailableException;
 use DreamFactory\Core\Services\BaseRestService;
 use DreamFactory\Core\Utility\ResourcesWrapper;
 use DreamFactory\Core\Utility\Session;
@@ -22,289 +21,189 @@ use ServiceManager;
  */
 class Swagger extends BaseRestService
 {
-    use StaticCacheable;
-
     //*************************************************************************
     //	Constants
     //*************************************************************************
 
     /**
-     * @const string The current API version
-     */
-    const API_VERSION = '2.0';
-    /**
-     * @const string The Swagger version
+     * @const string The OpenAPI Spec/Swagger version
      */
     const SWAGGER_VERSION = '2.0';
-    /**
-     * @const string The private cache file
-     */
-    const SWAGGER_CACHE_PREFIX = 'swagger:';
-
-    //*************************************************************************
-    //	Members
-    //*************************************************************************
-
-    /**
-     * @var int|null Native data format of this service - DataFormats enum value.
-     */
-    protected $nativeFormat = DataFormats::JSON;
 
     //*************************************************************************
     //	Methods
     //*************************************************************************
 
     /**
-     *
-     * @return string The cache prefix associated with this service
-     */
-    protected static function getCachePrefix()
-    {
-        return static::SWAGGER_CACHE_PREFIX;
-    }
-
-    /**
-     * @return array|string|bool
+     * @return array
+     * @throws ForbiddenException
+     * @throws ServiceUnavailableException
      */
     protected function handleGET()
     {
-        if ($this->request->getParameterAsBool(ApiOptions::AS_ACCESS_LIST)) {
-            return ResourcesWrapper::wrapResources(ServiceManager::getServiceNames());
-        }
-
         if (!empty($this->resource)) {
-            return $this->getSwaggerForService($this->resource);
+            Log::info("Building Swagger file for service {$this->resource}.");
+
+            if (!Session::checkForAnyServicePermissions($this->resource)) {
+                throw new ForbiddenException("You do not have access to API Docs for the requested service {$this->resource}.");
+            }
+
+            $service = ServiceManager::getService($this->resource);
+            if (empty($doc = $service->getApiDoc())) {
+                throw new ServiceUnavailableException("There are no defined API Docs for the requested service {$this->resource}.");
+            }
+
+            $results = $this->buildSwaggerServiceInfo($service->getName(), $doc);
+
+            $tags = [['name' => $service->getName(), 'description' => (string)$service->getDescription()]];
+            $paths = (array)array_get($results, 'paths');
+            $definitions = (array)array_get($results, 'definitions');
+            $parameters = (array)array_get($results, 'parameters');
+
+            $content = [
+                'swagger'             => static::SWAGGER_VERSION,
+                'securityDefinitions' => ['apiKey' => ['type' => 'apiKey', 'name' => 'api_key', 'in' => 'header']],
+                //'host'           => 'df.local',
+                //'schemes'        => ['https'],
+                'basePath'            => '/api/v2',
+                'info'                => [
+                    'title'       => $service->getLabel(),
+                    'description' => $service->getDescription(),
+                    'version'     => Config::get('df.api_version'),
+                ],
+                'consumes'            => ['application/json', 'application/xml'],
+                'produces'            => ['application/json', 'application/xml'],
+                'paths'               => $paths,
+                'definitions'         => $definitions,
+                'parameters'          => $parameters,
+                'tags'                => $tags,
+            ];
+
+            Log::info('Swagger file build process complete.');
+
+            return $content;
         }
 
-        if ($this->request->getParameterAsBool(ApiOptions::REFRESH)) {
-            $roleId = Session::getRoleId();
-            static::clearCache($roleId);
+        if ($this->request->getParameterAsBool(ApiOptions::AS_ACCESS_LIST)) {
+            return ResourcesWrapper::wrapResources($this->getAccessList());
         }
 
-        return $this->getSwagger();
+        Log::info('Building Swagger file for this instance.');
+
+        $paths = [];
+        $definitions = [];
+        $parameters = [];
+        $tags = [];
+
+        foreach (ServiceManager::getServiceNames(true) as $serviceName) {
+            if (Session::checkForAnyServicePermissions($serviceName)) {
+                try {
+                    if (!empty($service = ServiceManager::getService($serviceName))) {
+                        if (!empty($doc = $service->getApiDoc())) {
+                            $results = $this->buildSwaggerServiceInfo($serviceName, $doc);
+                            $paths = array_merge($paths, (array)array_get($results, 'paths'));
+                            $definitions = array_merge($definitions, (array)array_get($results, 'definitions'));
+                            $parameters = array_merge($parameters, (array)array_get($results, 'parameters'));
+                            $tags[] = ['name'        => $service->getName(),
+                                       'description' => (string)$service->getDescription()
+                            ];
+                        }
+                    }
+                } catch (\Exception $ex) {
+                    Log::info("Failed to build Swagger file for service $serviceName. {$ex->getMessage()}");
+                }
+            }
+        }
+
+        $description = <<<HTML
+HTML;
+        $content = [
+            'swagger'             => static::SWAGGER_VERSION,
+            'securityDefinitions' => ['apiKey' => ['type' => 'apiKey', 'name' => 'api_key', 'in' => 'header']],
+            //'host'           => 'df.local',
+            //'schemes'        => ['https'],
+            'basePath'            => '/api/v2',
+            'info'                => [
+                'title'       => 'DreamFactory Live API Documentation',
+                'description' => $description,
+                'version'     => Config::get('df.api_version'),
+                //'termsOfServiceUrl' => 'http://www.dreamfactory.com/terms/',
+                'contact'     => [
+                    'name'  => 'DreamFactory Software, Inc.',
+                    'email' => 'support@dreamfactory.com',
+                    'url'   => "https://www.dreamfactory.com/"
+                ],
+                'license'     => [
+                    'name' => 'Apache 2.0',
+                    'url'  => 'http://www.apache.org/licenses/LICENSE-2.0.html'
+                ]
+            ],
+            'consumes'            => ['application/json', 'application/xml'],
+            'produces'            => ['application/json', 'application/xml'],
+            'paths'               => $paths,
+            'definitions'         => $definitions,
+            'parameters'          => $parameters,
+            'tags'                => $tags,
+        ];
+
+        Log::info('Swagger file build process complete.');
+
+        return $content;
     }
 
-    public static function clearCache($role_id)
+    protected function buildSwaggerServiceInfo($name, array $content)
     {
-        static::removeFromCache($role_id);
-    }
+        //  Gather the services
+        $paths = [];
+        $definitions = [];
+        $parameters = [];
 
-    /**
-     * Main retrieve point for a list of swagger-able services
-     * This builds the full swagger cache if it does not exist
-     * @return array The JSON contents of the swagger api listing.
-     * @throws UnauthorizedException
-     * @throws \Exception
-     */
-    public function getSwagger()
-    {
+        //	Spin through service and pull the events
+        $servicePaths = (array)array_get($content, 'paths');
+        $serviceDefs = (array)array_get($content, 'definitions');
+        $serviceParams = (array)array_get($content, 'parameters');
+
         if (Session::isSysAdmin()) {
-            $roleId = 'admin';
-        } elseif (empty($roleId = strval(Session::getRoleId()))) {
-            throw new UnauthorizedException("Valid role or administrator required.");
-        }
-
-        if (null === ($content = static::getFromCache($roleId))) {
-            Log::info('Building Swagger cache');
-
-            //  Gather the services
-            $paths = [];
-            $definitions = static::getDefaultModels();
-            $parameters = ApiOptions::getSwaggerGlobalParameters();
-            $tags = [];
-
-            //	Spin through services and pull the events
-            /** @var ServiceInterface[] $services */
-            if (!empty($services = ServiceManager::getServices(true))) {
-                foreach ($services as $apiName => $service) {
-                    $tags[$apiName] = $service->getDescription();
-                    $content = $service->getApiDoc();
-                    if (!empty($content)) {
-                        $servicePaths = (array)array_get($content, 'paths');
-                        $serviceDefs = (array)array_get($content, 'definitions');
-                        $serviceParams = (array)array_get($content, 'parameters');
-
-                        //  Add to the pile
-                        $paths = array_merge($paths, $servicePaths);
-                        $definitions = array_merge($definitions, $serviceDefs);
-                        $parameters = array_merge($parameters, $serviceParams);
+            //  Add to the pile
+            $paths = array_merge($paths, $servicePaths);
+        } else {
+            foreach ($servicePaths as $path => $pathInfo) {
+                $resource = $path;
+                if (false !== stripos($resource, '/' . $name)) {
+                    $resource = ltrim(substr($resource, strlen($name) + 1), '/');
+                }
+                $allowed = Session::getServicePermissions($name, $resource);
+                foreach ($pathInfo as $verb => $verbInfo) {
+                    // Need to check if verb is really verb
+                    try {
+                        $action = VerbsMask::toNumeric($verb);
+                        if ($action & $allowed) {
+                            $paths[$path][$verb] = $verbInfo;
+                        }
+                    } catch (\Exception $ex) {
+                        // not a valid verb, could be part of swagger spec, add it anyway
+                        $paths[$path][$verb] = $verbInfo;
                     }
                 }
             }
-
-            // cache main api listing file
-            $description = <<<HTML
-HTML;
-
-            $content = [
-                'swagger'             => static::SWAGGER_VERSION,
-                'securityDefinitions' => ['apiKey' => ['type' => 'apiKey', 'name' => 'api_key', 'in' => 'header']],
-                'info'                => [
-                    'title'       => 'DreamFactory Live API Documentation',
-                    'description' => $description,
-                    'version'     => Config::get('df.api_version', static::API_VERSION),
-                    //'termsOfServiceUrl' => 'http://www.dreamfactory.com/terms/',
-                    'contact'     => [
-                        'name'  => 'DreamFactory Software, Inc.',
-                        'email' => 'support@dreamfactory.com',
-                        'url'   => "https://www.dreamfactory.com/"
-                    ],
-                    'license'     => [
-                        'name' => 'Apache 2.0',
-                        'url'  => 'http://www.apache.org/licenses/LICENSE-2.0.html'
-                    ]
-                ],
-                //'host'           => 'df.local',
-                //'schemes'        => ['https'],
-                'basePath'            => '/api/v2',
-                'consumes'            => ['application/json', 'application/xml'],
-                'produces'            => ['application/json', 'application/xml'],
-                'paths'               => $paths,
-                'definitions'         => $definitions,
-                'tags'                => $tags,
-                'parameters'          => $parameters,
-            ];
-
-            static::addToCache($roleId, $content, true);
-
-            Log::info('Swagger cache build process complete');
         }
 
-        return $content;
-    }
+        //  Add to the pile
+        $definitions = array_merge($definitions, $serviceDefs);
+        $parameters = array_merge($parameters, $serviceParams);
 
-    /**
-     * This builds the full swagger cache for a particular service if it does not exist
-     * @param string $name
-     * @return array The JSON contents of the swagger api listing.
-     * @throws UnauthorizedException
-     */
-    public function getSwaggerForService($name)
-    {
-        if (Session::isSysAdmin()) {
-            $roleId = 'admin';
-        } elseif (empty($roleId = strval(Session::getRoleId()))) {
-            throw new UnauthorizedException("Valid role or administrator required.");
-        }
-
-//        if (null === ($content = static::getFromCache($name.':'.$roleId))) {
-            Log::info("Building Swagger cache for $name");
-
-            //  Gather the services
-            $paths = [];
-            $definitions = static::getDefaultModels();
-            $parameters = ApiOptions::getSwaggerGlobalParameters();
-            $tags = [];
-
-            //	Spin through service and pull the events
-            /** @var ServiceInterface $service */
-            if (!empty($service = ServiceManager::getService($name))) {
-                $tags[$name] = $service->getDescription();
-                $content = $service->getApiDoc();
-                if (!empty($content)) {
-                    $servicePaths = (array)array_get($content, 'paths');
-                    $serviceDefs = (array)array_get($content, 'definitions');
-                    $serviceParams = (array)array_get($content, 'parameters');
-
-                    //  Add to the pile
-                    $paths = array_merge($paths, $servicePaths);
-                    $definitions = array_merge($definitions, $serviceDefs);
-                    $parameters = array_merge($parameters, $serviceParams);
-                }
-            }
-
-            // cache main api listing file
-            $description = <<<HTML
-HTML;
-
-            $content = [
-                'swagger'             => static::SWAGGER_VERSION,
-                'securityDefinitions' => ['apiKey' => ['type' => 'apiKey', 'name' => 'api_key', 'in' => 'header']],
-                'info'                => [
-                    'title'       => 'DreamFactory Live API Documentation',
-                    'description' => $description,
-                    'version'     => Config::get('df.api_version', static::API_VERSION),
-                    //'termsOfServiceUrl' => 'http://www.dreamfactory.com/terms/',
-                    'contact'     => [
-                        'name'  => 'DreamFactory Software, Inc.',
-                        'email' => 'support@dreamfactory.com',
-                        'url'   => "https://www.dreamfactory.com/"
-                    ],
-                    'license'     => [
-                        'name' => 'Apache 2.0',
-                        'url'  => 'http://www.apache.org/licenses/LICENSE-2.0.html'
-                    ]
-                ],
-                //'host'           => 'df.local',
-                //'schemes'        => ['https'],
-                'basePath'            => '/api/v2',
-                'consumes'            => ['application/json', 'application/xml'],
-                'produces'            => ['application/json', 'application/xml'],
-                'paths'               => $paths,
-                'definitions'         => $definitions,
-                'tags'                => $tags,
-                'parameters'          => $parameters,
-            ];
-
-//            static::addToCache($name.':'.$roleId, $content, true);
-
-            Log::info('Swagger cache build process complete');
-//        }
-
-        return $content;
-    }
-
-    public static function getDefaultModels()
-    {
-        $wrapper = ResourcesWrapper::getWrapper();
-
-        return [
-            'ResourceList' => [
-                'type'       => 'object',
-                'properties' => [
-                    $wrapper => [
-                        'type'        => 'array',
-                        'description' => 'Array of accessible resources available to this service.',
-                        'items'       => [
-                            'type' => 'string',
-                        ],
-                    ],
-                ],
-            ],
-            'Success'      => [
-                'type'       => 'object',
-                'properties' => [
-                    'success' => [
-                        'type'        => 'boolean',
-                        'description' => 'True when API call was successful, false or error otherwise.',
-                    ],
-                ],
-            ],
-            'Error'        => [
-                'type'       => 'object',
-                'properties' => [
-                    'code'    => [
-                        'type'        => 'integer',
-                        'format'      => 'int32',
-                        'description' => 'Error code.',
-                    ],
-                    'message' => [
-                        'type'        => 'string',
-                        'description' => 'String description of the error.',
-                    ],
-                ],
-            ],
-        ];
+        return ['paths' => $paths, 'definitions' => $definitions, 'parameters' => $parameters];
     }
 
     public static function getApiDocInfo($service)
     {
+        $wrapper = ResourcesWrapper::getWrapper();
         $name = strtolower($service->name);
         $capitalized = camelize($service->name);
 
         return [
             'paths'       => [
-                '/' . $name => [
+                '/' . $name                              => [
                     'get' =>
                         [
                             'tags'        => [$name],
@@ -332,9 +231,79 @@ HTML;
                             'description' => 'This returns the Swagger file containing all API services.',
                         ],
                 ],
+                '/' . $name . '/_service'                => [
+                    'get' =>
+                        [
+                            'tags'        => [$name],
+                            'summary'     => 'get' . $capitalized . 'Services() - Retrieve the list of specific services.',
+                            'operationId' => 'get' . $capitalized . 'Services',
+                            'parameters'  => [
+                            ],
+                            'responses'   => [
+                                '200'     => [
+                                    'description' => 'Swagger Response',
+                                    'schema'      => ['$ref' => '#/definitions/SwaggerServices']
+                                ],
+                                'default' => [
+                                    'description' => 'Error',
+                                    'schema'      => ['$ref' => '#/definitions/Error']
+                                ]
+                            ],
+                            'description' => 'This returns the available services.',
+                        ],
+                ],
+                '/' . $name . '/_service/{service_name}' => [
+                    'get' =>
+                        [
+                            'tags'        => [$name],
+                            'summary'     => 'get' . $capitalized . 'Service() - Retrieve the swagger for a specific services.',
+                            'operationId' => 'get' . $capitalized . 'Service',
+                            'parameters'  => [
+                                [
+                                    'name'        => 'service_name',
+                                    'description' => 'Name of the service to retrieve the swagger doc for.',
+                                    'type'        => 'string',
+                                    'in'          => 'path',
+                                    'required'    => true,
+                                ],
+                            ],
+                            'responses'   => [
+                                '200'     => [
+                                    'description' => 'Swagger Response',
+                                    'schema'      => ['$ref' => '#/definitions/SwaggerResponse']
+                                ],
+                                'default' => [
+                                    'description' => 'Error',
+                                    'schema'      => ['$ref' => '#/definitions/Error']
+                                ]
+                            ],
+                            'description' => 'This returns the Swagger file containing the requested API services.',
+                        ],
+                ],
+                '/' . $name . '/_service_type'           => [
+                    'get' =>
+                        [
+                            'tags'        => [$name],
+                            'summary'     => 'get' . $capitalized . 'ServiceTypes() - Retrieve the available service types.',
+                            'operationId' => 'get' . $capitalized . 'ServiceTypes',
+                            'parameters'  => [
+                            ],
+                            'responses'   => [
+                                '200'     => [
+                                    'description' => 'Swagger Response',
+                                    'schema'      => ['$ref' => '#/definitions/SwaggerServiceTypes']
+                                ],
+                                'default' => [
+                                    'description' => 'Error',
+                                    'schema'      => ['$ref' => '#/definitions/Error']
+                                ]
+                            ],
+                            'description' => 'This returns the service types.',
+                        ],
+                ],
             ],
             'definitions' => [
-                'SwaggerResponse'   => [
+                'SwaggerResponse'     => [
                     'type'       => 'object',
                     'properties' => [
                         'apiVersion'  => [
@@ -365,7 +334,7 @@ HTML;
                         ],
                     ],
                 ],
-                'SwaggerPath'       => [
+                'SwaggerPath'         => [
                     'type'       => 'object',
                     'properties' => [
                         '__name__' => [
@@ -374,12 +343,78 @@ HTML;
                         ],
                     ],
                 ],
-                'SwaggerDefinition' => [
+                'SwaggerDefinition'   => [
                     'type'       => 'object',
                     'properties' => [
                         '__name__' => [
                             'type'        => 'string',
                             'description' => 'Definition.',
+                        ],
+                    ],
+                ],
+                'SwaggerServices'     => [
+                    'type'       => 'object',
+                    'properties' => [
+                        $wrapper => [
+                            'type'        => 'array',
+                            'description' => 'Array of services and their properties.',
+                            'items'       => [
+                                '$ref' => '#/definitions/SwaggerService',
+                            ],
+                        ],
+                    ],
+                ],
+                'SwaggerService'      => [
+                    'type'       => 'object',
+                    'properties' => [
+                        'name' => [
+                            'type'        => 'string',
+                            'description' => 'Name of the service.',
+                        ],
+                        'label' => [
+                            'type'        => 'string',
+                            'description' => 'Label for the service.',
+                        ],
+                        'type' => [
+                            'type'        => 'string',
+                            'description' => 'Type of the service.',
+                        ],
+                        'description' => [
+                            'type'        => 'string',
+                            'description' => 'Description of the service.',
+                        ],
+                    ],
+                ],
+                'SwaggerServiceTypes' => [
+                    'type'       => 'object',
+                    'properties' => [
+                        $wrapper => [
+                            'type'        => 'array',
+                            'description' => 'Array of service types and their properties.',
+                            'items'       => [
+                                '$ref' => '#/definitions/SwaggerServiceType',
+                            ],
+                        ],
+                    ],
+                ],
+                'SwaggerServiceType'  => [
+                    'type'       => 'object',
+                    'properties' => [
+                        'name' => [
+                            'type'        => 'string',
+                            'description' => 'Name of the service type.',
+                        ],
+                        'label' => [
+                            'type'        => 'string',
+                            'description' => 'Label for the service type.',
+                        ],
+                        'group' => [
+                            'type'        => 'string',
+                            'description' => 'Group to which the service type belongs.',
+                        ],
+                        'description' => [
+                            'type'        => 'string',
+                            'description' => 'Description of the service type.',
                         ],
                     ],
                 ],
