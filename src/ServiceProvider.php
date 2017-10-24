@@ -37,6 +37,16 @@ class ServiceProvider extends \Illuminate\Support\ServiceProvider
                     'factory'         => function ($config) {
                         return new Swagger($config);
                     },
+                    'access_exceptions' => [
+                        [
+                            'verb_mask' => 1,
+                            'resource'  => '',
+                        ],
+                        [
+                            'verb_mask' => 1,
+                            'resource'  => '*',
+                        ]
+                    ],
                 ])
             );
         });
