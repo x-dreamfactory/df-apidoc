@@ -1,4 +1,5 @@
 <?php
+
 namespace DreamFactory\Core\ApiDoc;
 
 use DreamFactory\Core\ApiDoc\Services\Swagger;
@@ -25,16 +26,16 @@ class ServiceProvider extends \Illuminate\Support\ServiceProvider
      */
     public function register()
     {
-        // Add our service types.
         $this->app->resolving('df.service', function (ServiceManager $df) {
+            // Add service type
             $df->addType(
                 new ServiceType([
-                    'name'            => 'swagger',
-                    'label'           => 'API Docs',
-                    'description'     => 'API documenting and testing service using Swagger specifications.',
-                    'group'           => ServiceTypeGroups::API_DOC,
-                    'singleton'       => true,
-                    'factory'         => function ($config) {
+                    'name'              => 'swagger',
+                    'label'             => 'API Docs',
+                    'description'       => 'API documenting and testing service using Swagger specifications.',
+                    'group'             => ServiceTypeGroups::API_DOC,
+                    'singleton'         => true,
+                    'factory'           => function ($config) {
                         return new Swagger($config);
                     },
                     'access_exceptions' => [
@@ -45,7 +46,7 @@ class ServiceProvider extends \Illuminate\Support\ServiceProvider
                         [
                             'verb_mask' => 1,
                             'resource'  => '*',
-                        ]
+                        ],
                     ],
                 ])
             );
