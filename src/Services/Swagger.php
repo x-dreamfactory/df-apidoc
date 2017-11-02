@@ -125,12 +125,12 @@ class Swagger extends BaseRestService
                 'schemas'         => $this->getDefaultApiDocSchemas(),
             ],
             'security'   => [
-                'BasicAuth'          => [],
-                'BearerAuth'         => [],
-                'ApiKeyQuery'        => [],
-                'ApiKeyHeader'       => [],
-                'SessionTokenQuery'  => [],
-                'SessionTokenHeader' => [],
+                ['BasicAuth' => []],
+                ['BearerAuth' => []],
+                ['ApiKeyQuery' => []],
+                ['ApiKeyHeader' => []],
+                ['SessionTokenQuery' => []],
+                ['SessionTokenHeader' => []],
             ],
             'tags'       => [],
         ];
