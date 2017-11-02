@@ -299,9 +299,9 @@ class Swagger extends BaseRestService
 
         return [
             '/'               => [
-                'get' =>
-                    [
-                        'summary'     => 'get' . $capitalized . '() - Retrieve the whole system Open API specification document.',
+                'get' => [
+                        'summary'     => 'Retrieve the whole system specification document.',
+                        'description' => 'This returns the Open API specification file containing all API services.',
                         'operationId' => 'get' . $capitalized,
                         'parameters'  => [
                             [
@@ -316,29 +316,16 @@ class Swagger extends BaseRestService
                         ],
                         'responses'   => [
                             '200' => ['$ref' => '#/components/responses/ApiDocsResponse']
-                        ],
-                        'description' => 'This returns the Open API specification file containing all API services.',
-                    ],
-//                'head' =>
-//                    [
-//                        'summary'     => 'get' . $capitalized . 'Services() - Retrieve the list of specific services.',
-//                        'operationId' => 'get' . $capitalized . 'Services',
-//                        'parameters'  => [
-//                            ApiOptions::documentOption(ApiOptions::AS_ACCESS_LIST),
-//                            ApiOptions::documentOption(ApiOptions::AS_LIST),
-//                        ],
-//                        'responses'   => [
 //                            '200' => ['$ref' => '#/components/responses/ResourceList']
-//                        ],
-//                        'description' => 'This returns the available service names.',
-//                    ],
+                        ],
+                    ],
             ],
             '/{service_name}' => [
                 'get' =>
                     [
-                        'summary'     => 'get' . $capitalized . 'Service() - Retrieve the Open API specification for a specific service.',
-                        'operationId' => 'get' . $capitalized . 'Service',
+                        'summary'     => 'Retrieve the specification for a specific service.',
                         'description' => 'This returns the Open API specification file for the requested service.',
+                        'operationId' => 'get' . $capitalized . 'ByService',
                         'parameters'  => [
                             [
                                 'name'        => 'service_name',
