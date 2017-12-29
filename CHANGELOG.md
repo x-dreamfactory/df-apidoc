@@ -4,6 +4,11 @@ This project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2017-12-28
+- Added package discovery
+- DF-1150 Update copyright and support email
+- Use resource handler
+
 ## [0.5.0] - 2017-11-03
 - Added api required endpoint access exceptions
 - Upgrade Swagger to OpenAPI 3.0 specification
@@ -26,7 +31,8 @@ This project adheres to [Semantic Versioning](http://semver.org/).
 ## 0.1.0 - 2017-04-21
 First official release working with the new [dreamfactory](https://github.com/dreamfactorysoftware/dreamfactory) project.
 
-[Unreleased]: https://github.com/dreamfactorysoftware/df-apidoc/compare/0.5.0...HEAD
+[Unreleased]: https://github.com/dreamfactorysoftware/df-apidoc/compare/0.6.0...HEAD
+[0.6.0]: https://github.com/dreamfactorysoftware/df-apidoc/compare/0.5.0...0.6.0
 [0.5.0]: https://github.com/dreamfactorysoftware/df-apidoc/compare/0.4.0...0.5.0
 [0.4.0]: https://github.com/dreamfactorysoftware/df-apidoc/compare/0.3.0...0.4.0
 [0.3.0]: https://github.com/dreamfactorysoftware/df-apidoc/compare/0.2.0...0.3.0
