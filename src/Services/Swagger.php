@@ -4,7 +4,6 @@ namespace DreamFactory\Core\ApiDoc\Services;
 
 use DreamFactory\Core\Enums\ApiOptions;
 use DreamFactory\Core\Enums\VerbsMask;
-use DreamFactory\Core\Exceptions\BadRequestException;
 use DreamFactory\Core\Exceptions\ForbiddenException;
 use DreamFactory\Core\Exceptions\ServiceUnavailableException;
 use DreamFactory\Core\Services\BaseRestService;
@@ -35,12 +34,8 @@ class Swagger extends BaseRestService
     //	Methods
     //*************************************************************************
 
-    public function getResources($onlyHandlers = false)
+    public function getResources()
     {
-        if ($onlyHandlers) {
-            return [];
-        }
-
         $services = [];
         foreach (ServiceManager::getServiceNames(true) as $serviceName) {
             if (Session::allowsServiceAccess($serviceName)) {
@@ -65,9 +60,9 @@ class Swagger extends BaseRestService
 
     /**
      * @return array
-     * @throws BadRequestException
      * @throws ForbiddenException
      * @throws ServiceUnavailableException
+     * @throws \DreamFactory\Core\Exceptions\NotFoundException
      */
     protected function handleGET()
     {
@@ -300,25 +295,25 @@ class Swagger extends BaseRestService
         return [
             '/'               => [
                 'get' => [
-                        'summary'     => 'Retrieve the whole system specification document.',
-                        'description' => 'This returns the Open API specification file containing all API services.',
-                        'operationId' => 'get' . $capitalized,
-                        'parameters'  => [
-                            [
-                                'name'        => 'file',
-                                'description' => 'Download the results of the request as a file.',
-                                'schema'      => ['type' => 'string'],
-                                'in'          => 'query',
-                            ],
-                            ApiOptions::documentOption(ApiOptions::AS_ACCESS_LIST),
-                            ApiOptions::documentOption(ApiOptions::AS_LIST),
-                            ApiOptions::documentOption(ApiOptions::REFRESH),
+                    'summary'     => 'Retrieve the whole system specification document.',
+                    'description' => 'This returns the Open API specification file containing all API services.',
+                    'operationId' => 'get' . $capitalized,
+                    'parameters'  => [
+                        [
+                            'name'        => 'file',
+                            'description' => 'Download the results of the request as a file.',
+                            'schema'      => ['type' => 'string'],
+                            'in'          => 'query',
                         ],
-                        'responses'   => [
-                            '200' => ['$ref' => '#/components/responses/ApiDocsResponse']
-//                            '200' => ['$ref' => '#/components/responses/ResourceList']
-                        ],
+                        ApiOptions::documentOption(ApiOptions::AS_ACCESS_LIST),
+                        ApiOptions::documentOption(ApiOptions::AS_LIST),
+                        ApiOptions::documentOption(ApiOptions::REFRESH),
                     ],
+                    'responses'   => [
+                        '200' => ['$ref' => '#/components/responses/ApiDocsResponse']
+//                            '200' => ['$ref' => '#/components/responses/ResourceList']
+                    ],
+                ],
             ],
             '/{service_name}' => [
                 'get' =>
