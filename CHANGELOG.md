@@ -3,6 +3,8 @@ All notable changes to this project will be documented in this file.
 This project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
+### Fixed
+- DF-1296 Cleaned up path and resource handling before checking for session privileges
 
 ## [0.6.0] - 2017-12-28
 - Added package discovery

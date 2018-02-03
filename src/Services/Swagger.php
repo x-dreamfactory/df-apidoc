@@ -222,7 +222,7 @@ class Swagger extends BaseRestService
         $isAdmin = Session::isSysAdmin();
         // tricky here, loop through all indexes to check if all start with service name,
         // otherwise need to prepend service name to all.
-        $prependServiceName = (!empty(array_filter(array_keys($servicePaths), function ($k) use ($name) {
+        $prependServiceName = (!empty($temp = array_filter(array_keys($servicePaths), function ($k) use ($name) {
             $k = ltrim($k, '/');
             if (false !== strpos($k, '/')) {
                 $k = strstr($k, '/', true);
@@ -233,12 +233,25 @@ class Swagger extends BaseRestService
 
         //	Spin through service and parse out the paths and verbs not permitted
         foreach ($servicePaths as $path => $pathInfo) {
-            $resource = $path;
-            if (false !== stripos($resource, '/' . $name)) {
-                $resource = ltrim(substr($resource, strlen($name) + 1), '/');
-            }
-            if (!$single_service_format && $prependServiceName) {
-                $path = '/' . $name . $path;
+            if ($prependServiceName) {
+                $resource = trim($path, '/');
+                if (!$single_service_format) {
+                    $path = rtrim('/' . $name . $path, '/'); // add service name to path output
+                }
+            } else {
+                if (0 === strcasecmp('/' . $name, $path)) {
+                    $resource = null;
+                    if ($single_service_format) {
+                        $path = '/'; // remove service name to path output
+                    }
+                } elseif (0 === stripos($path, '/' . $name . '/')) {
+                    $resource = substr($path, strlen('/' . $name . '/')); // remove service name from resource
+                    if ($single_service_format) {
+                        $path = substr($path, strlen('/' . $name)); // remove service name from path
+                    }
+                } else {
+                    $resource = trim($path, '/'); // should never happen
+                }
             }
             $allowed = Session::getServicePermissions($name, $resource);
             foreach ($pathInfo as $verb => $verbInfo) {
